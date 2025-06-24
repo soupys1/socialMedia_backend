@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>MiniBlog</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background-color: #f0f2f5;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+    }
+
+    header {
+      background-color: #007bff;
+      color: white;
+      width: 100%;
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    header div {
+      font-size: 1.8rem;
+      font-weight: bold;
+    }
+
+    .header-buttons {
+      display: flex;
+      gap: 1rem;
+    }
+
+    .logout-btn, .profile-btn {
+      background-color: #e0245e;
+      padding: 0.6rem 1.2rem;
+      border: none;
+      border-radius: 6px;
+      color: white;
+      cursor: pointer;
+      font-size: 1rem;
+      transition: background-color 0.2s ease, transform 0.1s ease;
+    }
+
+    .profile-btn {
+      background-color: #17a2b8;
+    }
+
+    .logout-btn:hover, .profile-btn:hover {
+      background-color: #c82355;
+      transform: translateY(-1px);
+    }
+
+    .profile-btn:hover {
+      background-color: #138496;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 700px;
+      margin: 2rem 1rem;
+      padding: 1rem;
+    }
+
+    form.post-form {
+      background-color: white;
+      padding: 1.5rem;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      margin-bottom: 2rem;
+    }
+
+    form.post-form label {
+      font-weight: 600;
+      color: #333;
+      display: block;
+      margin: 0.75rem 0 0.25rem;
+    }
+
+    form.post-form input[type="text"],
+    form.post-form textarea {
+      width: 100%;
+      padding: 0.75rem;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 1rem;
+      transition: border-color 0.2s ease;
+    }
+
+    form.post-form input:focus,
+    form.post-form textarea:focus {
+      border-color: #007bff;
+      outline: none;
+      box-shadow: 0 0 5px rgba(0, 123, 255, 0.3);
+    }
+
+    form.post-form textarea {
+      resize: vertical;
+      min-height: 100px;
+    }
+
+    form.post-form button {
+      margin-top: 1rem;
+      padding: 0.75rem 1.5rem;
+      background-color: #007bff;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 1rem;
+      font-weight: 600;
+      transition: background-color 0.2s ease, transform 0.1s ease;
+    }
+
+    form.post-form button:hover {
+      background-color: #0056b3;
+      transform: translateY(-1px);
+    }
+
+    .post {
+      background-color: white;
+      padding: 1.5rem;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      margin-bottom: 1.5rem;
+      transition: transform 0.2s ease;
+    }
+
+    .post:hover {
+      transform: translateY(-2px);
+    }
+
+    .post h4 {
+      margin: 0 0 0.5rem;
+      color: #007bff;
+      font-size: 1.2rem;
+      font-weight: 600;
+    }
+
+    .post .author {
+      color: #666;
+      font-size: 0.95rem;
+      font-weight: 500;
+      margin-bottom: 0.75rem;
+    }
+
+    .post p {
+      margin: 0.75rem 0 0;
+      line-height: 1.6;
+      color: #333;
+    }
+
+    .post-actions {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 1rem;
+    }
+
+    .post-actions button {
+      padding: 0.4rem 0.8rem;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      transition: background-color 0.2s ease;
+    }
+
+    .post-actions .delete-btn {
+      background-color: #dc3545;
+      color: white;
+    }
+
+    .post-actions .delete-btn:hover {
+      background-color: #c82333;
+    }
+
+    .post-actions .edit-btn {
+      background-color: #007bff;
+      color: white;
+    }
+
+    .post-actions .edit-btn:hover {
+      background-color: #0056b3;
+    }
+
+    .no-posts {
+      text-align: center;
+      color: #666;
+      font-size: 1rem;
+      margin-top: 2rem;
+    }
+
+    @media (max-width: 600px) {
+      .container {
+        margin: 1rem;
+        padding: 0.5rem;
+      }
+
+      header {
+        padding: 0.75rem 1rem;
+      }
+
+      header div {
+        font-size: 1.5rem;
+      }
+
+      .logout-btn, .profile-btn {
+        padding: 0.5rem 1rem;
+        font-size: 0.9rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>MiniBlog</div>
+    <div class="header-buttons">
+      <form action="/profile" method="GET">
+        <button type="submit" class="profile-btn">Profile</button>
+      </form>
+      <form action="/logout" >
+        <button type="submit" class="logout-btn">Logout</button>
+      </form>
+    </div>
+  </header>
+
+  <div class="container">
+    <form action="/content" method="POST" class="post-form">
+      <label for="title">Title</label>
+      <input type="text" name="title" id="title" required />
+
+      <label for="content">What's on your mind?</label>
+      <textarea name="content" id="content" rows="3" required></textarea>
+
+      <button type="submit">Post</button>
+    </form>
+
+    <% if (posts && posts.length > 0) { %>
+      <% posts.forEach(p => { %>
+        <div class="post">
+          <h4>@<%= p.author.username %></h4>
+          <div class="author"><%= p.title %></div>
+          <p><%= p.content %></p>
+          <% if (user && user.id === p.authorId) { %>
+            <div class="post-actions">
+              <form action="/delete" method="POST">
+                <input type="hidden" name="id" value="<%= p.id %>" />
+                <button type="submit" class="delete-btn">Delete</button>
+              </form>
+              <form action="/edit/<%= p.id %>" method="GET">
+                <button type="submit" class="edit-btn">Edit</button>
+              </form>
+            </div>
+          <% } %>
+        </div>
+      <% }) %>
+    <% } else { %>
+      <p class="no-posts">No posts available.</p>
+    <% } %>
+  </div>
+</body>
+</html>

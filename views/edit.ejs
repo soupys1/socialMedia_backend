@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Edit Post</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #f0f2f5;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    header {
+      background-color: #1da1f2;
+      color: white;
+      width: 100%;
+      padding: 1rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 1.5rem;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 600px;
+      margin-top: 2rem;
+      padding: 1rem;
+    }
+
+    form {
+      background-color: white;
+      padding: 1rem;
+      border-radius: 12px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    form label {
+      font-weight: bold;
+      display: block;
+      margin-top: 1rem;
+    }
+
+    form input[type="text"],
+    form textarea {
+      width: 100%;
+      padding: 0.5rem;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      margin-top: 0.5rem;
+    }
+
+    form button {
+      margin-top: 1rem;
+      padding: 0.5rem 1rem;
+      background-color: #1da1f2;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    .back-link {
+      display: inline-block;
+      margin-top: 1rem;
+      color: #1da1f2;
+      text-decoration: none;
+      font-size: 0.9rem;
+    }
+
+    .logout-btn {
+      background-color: #e0245e;
+      padding: 0.5rem 1rem;
+      border: none;
+      border-radius: 6px;
+      color: white;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>MiniBlog</div>
+    <form action="/logout" method="POST">
+      <button type="submit" class="logout-btn">Logout</button>
+    </form>
+  </header>
+
+  <div class="container">
+    <h2>Edit Your Post</h2>
+    <form action="/edit/<%= post.id %>" method="POST">
+      <label for="title">Title</label>
+      <input type="text" id="title" name="title" value="<%= post.title %>" required>
+
+      <label for="content">What's happening?</label>
+      <textarea id="content" name="content" rows="4" required><%= post.content %></textarea>
+
+      <button type="submit">Update Post</button>
+    </form>
+
+    <a href="/content" class="back-link">← Back to posts</a>
+  </div>
+</body>
+</html>

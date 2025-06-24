@@ -1,0 +1,106 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model user {
+  id              Int           @id @default(autoincrement())
+  username        String        @unique
+  firstName       String
+  lastName        String
+  email           String        @unique
+  password        String
+  profilePicture  String?       // Optional profile picture
+  isAdmin         Boolean       @default(false) // Added for admin functionality
+
+  post            post[]
+  comments        comment[]
+  friends         Friend[]      @relation("UserFriends")
+  friendedBy      Friend[]      @relation("FriendOf")
+  messageSent     Message[]     @relation("SentMessages")
+  messageReceived Message[]     @relation("ReceivedMessages")
+  images          Image[]       @relation("uploadedFiles")
+  postLikes       PostLike[]
+  commentLikes    CommentLike[]
+}
+
+model post {
+  id         Int          @id @default(autoincrement())
+  authorId   Int
+  author     user         @relation(fields: [authorId], references: [id])
+  title      String
+  content    String
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @default(now())
+  likes      Int          @default(0)
+  comments   comment[]
+  images     Image[]      @relation("PostImages")
+  postLikes  PostLike[]
+}
+
+model comment {
+  id           Int           @id @default(autoincrement())
+  content      String
+  postId       Int
+  post         post          @relation(fields: [postId], references: [id], onDelete: Cascade)
+  authorId     Int
+  author       user          @relation(fields: [authorId], references: [id])
+  createdAt    DateTime      @default(now())
+  likes        Int           @default(0)
+  commentLikes CommentLike[]
+}
+
+model Friend {
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  friendId   Int
+  user       user     @relation("UserFriends", fields: [userId], references: [id], onDelete: Cascade)
+  friend     user     @relation("FriendOf", fields: [friendId], references: [id], onDelete: Cascade)
+  addedAt    DateTime @default(now())
+  friended   Boolean  @default(false)
+}
+
+model Message {
+  id         Int      @id @default(autoincrement())
+  senderId   Int
+  receiverId Int
+  sender     user     @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver   user     @relation("ReceivedMessages", fields: [receiverId], references: [id], onDelete: Cascade)
+  content    String
+  createdAt  DateTime @default(now())
+}
+
+model Image {
+  id          Int      @id @default(autoincrement())
+  filename    String
+  path        String
+  mimetype    String
+  uploaderId  Int
+  uploader    user     @relation("uploadedFiles", fields: [uploaderId], references: [id], onDelete: Cascade)
+  uploadedAt  DateTime @default(now())
+  postId      Int?     // Nullable for user-only uploads
+  post        post?    @relation("PostImages", fields: [postId], references: [id], onDelete: Cascade)
+}
+
+model PostLike {
+  id     Int   @id @default(autoincrement())
+  userId Int
+  postId Int
+  user   user  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post   post  @relation(fields: [postId], references: [id], onDelete: Cascade)
+  @@unique([userId, postId])
+}
+
+model CommentLike {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  commentId Int
+  user      user     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  comment   comment  @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  @@unique([userId, commentId])
+}
