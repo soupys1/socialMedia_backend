@@ -3,6 +3,8 @@ const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const cookieParser = require('cookie-parser');
+const fileUpload = require('express-fileupload');
+const path = require('path');
 const { createClient } = require('@supabase/supabase-js');
 
 // Environment variable validation
@@ -19,22 +21,50 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 
 // Middleware
 app.use(cors({
-  origin: 'https://social-media-frontend-ezqu.vercel.app/',
+  origin: 'https://social-media-frontend-ezqu.vercel.app', // Preserved as requested
   credentials: true,
 }));
 
 app.use(bodyParser.json());
 app.use(cookieParser());
+app.use(fileUpload({
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  abortOnLimit: true, // Abort upload if limit exceeded
+}));
 app.disable('x-powered-by');
+
+// Utility function to delete files from Supabase Storage
+const deleteStorageFiles = async (bucket, paths) => {
+  if (paths.length === 0) return;
+  const { error } = await supabase.storage.from(bucket).remove(paths);
+  if (error) throw error;
+};
 
 // Middleware to verify Supabase JWT
 const authenticate = async (req, res, next) => {
-  const token = req.cookies.token;
-  if (!token) return res.status(401).json({ error: 'No token provided' });
+  // Support both cookie and Authorization header
+  let token = req.cookies.token;
+  if (!token && req.headers.authorization) {
+    const authHeader = req.headers.authorization;
+    if (authHeader.startsWith('Bearer ')) {
+      token = authHeader.substring(7);
+    }
+  }
+
+  if (!token) {
+    console.log('No token found in cookies or headers');
+    return res.status(401).json({ error: 'No token provided' });
+  }
+
+  console.log('Token found:', token.substring(0, 20) + '...');
 
   const { data: { user }, error } = await supabase.auth.getUser(token);
-  if (error || !user) return res.status(401).json({ error: 'Invalid token' });
+  if (error || !user) {
+    console.log('Token validation error:', error?.message);
+    return res.status(401).json({ error: 'Invalid or expired token' });
+  }
 
+  console.log('User authenticated:', user.id);
   req.user = user;
   next();
 };
@@ -82,10 +112,10 @@ app.post('/api/signup', async (req, res) => {
 
     if (dbError) throw dbError;
 
-    res.status(201).json({ message: 'User created' });
+    res.status(201).json({ message: 'User created successfully' });
   } catch (error) {
-    console.error('Signup error:', error);
-    res.status(500).json({ error: 'Signup failed' });
+    console.error('Signup error:', error.message);
+    res.status(500).json({ error: 'Failed to sign up' });
   }
 });
 
@@ -102,208 +132,210 @@ app.post('/api/login', async (req, res) => {
     });
 
     if (error) {
+      console.log('Login error:', error.message);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
+    console.log('Login successful, setting cookie');
     res.cookie('token', data.session.access_token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
+      secure: true, // Required for sameSite: 'none'
+      sameSite: 'none',
+      maxAge: 24 * 60 * 60 * 1000, // 24 hours
     });
 
-    res.json({ message: 'Login successful' });
+    res.json({ message: 'Login successful', user: data.user });
   } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ error: 'Login failed' });
+    console.error('Login error:', error.message);
+    res.status(500).json({ error: 'Failed to log in' });
   }
 });
 
-app.post('/api/logout', async (req, res) => {
-  await supabase.auth.signOut();
-  res.clearCookie('token');
-  res.json({ message: 'Logged out' });
+app.post('/api/logout', authenticate, async (req, res) => {
+  try {
+    const token = req.cookies.token;
+    const { error } = await supabase.auth.admin.signOut(token);
+    if (error) throw error;
+
+    res.clearCookie('token');
+    res.json({ message: 'Logged out successfully' });
+  } catch (error) {
+    console.error('Logout error:', error.message);
+    res.status(500).json({ error: 'Failed to log out' });
+  }
 });
 
 // Profile Picture Upload
-app.post(
-  '/api/profile/picture',
-  authenticate,
-  async (req, res) => {
-    if (!req.files || !req.files.profilePicture) {
-      return res.status(400).json({ error: 'No file uploaded' });
+app.post('/api/profile/picture', authenticate, async (req, res) => {
+  console.log('Profile picture upload - Files:', req.files);
+
+  if (!req.files || !req.files.profilePicture) {
+    return res.status(400).json({ error: 'No file uploaded' });
+  }
+
+  const file = req.files.profilePicture;
+  const allowedTypes = ['image/jpeg', 'image/png', 'image/gif'];
+  if (!allowedTypes.includes(file.mimetype)) {
+    return res.status(400).json({ error: 'Only JPG, PNG, and GIF images are allowed' });
+  }
+
+  try {
+    const userId = req.user.id;
+    const fileName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(file.name)}`;
+    const filePath = `profile_pictures/${fileName}`;
+
+    // Upload to Supabase Storage
+    const { error: uploadError } = await supabase.storage
+      .from('uploads')
+      .upload(filePath, file.data, { contentType: file.mimetype });
+
+    if (uploadError) throw uploadError;
+
+    // Get public URL
+    const { data: { publicUrl } } = supabase.storage
+      .from('uploads')
+      .getPublicUrl(filePath);
+
+    // Delete old profile picture if exists
+    const { data: user } = await supabase
+      .from('users')
+      .select('profile_picture')
+      .eq('id', userId)
+      .single();
+
+    if (user?.profile_picture) {
+      const oldFileName = user.profile_picture.split('/').pop();
+      await deleteStorageFiles('uploads', [`profile_pictures/${oldFileName}`]);
     }
 
-    const file = req.files.profilePicture;
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif'];
-    if (!allowedTypes.includes(file.mimetype)) {
-      return res.status(400).json({ error: 'Only JPG, PNG, and GIF images are allowed' });
-    }
-    if (file.size > 5 * 1024 * 1024) {
-      return res.status(400).json({ error: 'File size exceeds 5MB limit' });
+    // Update user profile picture
+    const { error: updateError } = await supabase
+      .from('users')
+      .update({ profile_picture: publicUrl })
+      .eq('id', userId);
+
+    if (updateError) throw updateError;
+
+    res.json({ message: 'Profile picture updated', profilePicture: publicUrl });
+  } catch (error) {
+    console.error('Error uploading profile picture:', error.message);
+    res.status(500).json({ error: 'Failed to upload profile picture' });
+  }
+});
+
+// Delete Profile
+app.delete('/api/profile', authenticate, async (req, res) => {
+  const userId = req.user.id;
+
+  try {
+    // Delete images from Supabase Storage
+    const { data: images } = await supabase
+      .from('images')
+      .select('path')
+      .eq('uploader_id', userId);
+
+    if (images?.length > 0) {
+      const paths = images.map(img => img.path.split('/').slice(-2).join('/'));
+      await deleteStorageFiles('uploads', paths);
     }
 
-    try {
-      const userId = req.user.id;
+    // Delete profile picture from Supabase Storage
+    const { data: user } = await supabase
+      .from('users')
+      .select('profile_picture')
+      .eq('id', userId)
+      .single();
+
+    if (user?.profile_picture) {
+      const fileName = user.profile_picture.split('/').pop();
+      await deleteStorageFiles('uploads', [`profile_pictures/${fileName}`]);
+    }
+
+    // Delete related data
+    await Promise.all([
+      supabase.from('images').delete().eq('uploader_id', userId),
+      supabase.from('comments').delete().eq('author_id', userId),
+      supabase.from('posts').delete().eq('author_id', userId),
+      supabase.from('messages').delete().or(`sender_id.eq.${userId},receiver_id.eq.${userId}`),
+      supabase.from('friends').delete().or(`user_id.eq.${userId},friend_id.eq.${userId}`),
+      supabase.from('users').delete().eq('id', userId),
+    ]);
+
+    // Sign out and clear cookie
+    const { error } = await supabase.auth.admin.signOut(req.cookies.token);
+    if (error) console.error('Sign out error:', error.message);
+
+    res.clearCookie('token');
+    res.json({ message: 'Profile deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting profile:', error.message);
+    res.status(500).json({ error: 'Failed to delete profile' });
+  }
+});
+
+// Post Routes
+app.post('/api/content', authenticate, async (req, res) => {
+  console.log('Creating post - Body:', req.body);
+  console.log('Creating post - Files:', req.files);
+
+  const { title, content } = req.body;
+  if (!title || !content) {
+    return res.status(400).json({ error: 'Title and content are required' });
+  }
+
+  try {
+    // Create post
+    const { data: post, error: postError } = await supabase
+      .from('posts')
+      .insert({ title, content, author_id: req.user.id })
+      .select()
+      .single();
+
+    if (postError) throw postError;
+
+    // Handle image upload if present
+    if (req.files?.image) {
+      const file = req.files.image;
+      const allowedTypes = ['image/jpeg', 'image/png', 'image/gif'];
+      if (!allowedTypes.includes(file.mimetype)) {
+        return res.status(400).json({ error: 'Only JPG, PNG, and GIF images are allowed' });
+      }
+
       const fileName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(file.name)}`;
-      const filePath = `profile_pictures/${fileName}`;
+      const filePath = `post_images/${fileName}`;
 
-      // Upload to Supabase Storage
       const { error: uploadError } = await supabase.storage
         .from('uploads')
-        .upload(filePath, file.data);
+        .upload(filePath, file.data, { contentType: file.mimetype });
 
       if (uploadError) throw uploadError;
 
-      // Get public URL
       const { data: { publicUrl } } = supabase.storage
         .from('uploads')
         .getPublicUrl(filePath);
 
-      // Delete old profile picture if exists
-      const { data: user } = await supabase
-        .from('users')
-        .select('profile_picture')
-        .eq('id', userId)
-        .single();
+      const { error: imageError } = await supabase.from('images').insert({
+        filename: fileName,
+        path: filePath,
+        mimetype: file.mimetype,
+        uploader_id: req.user.id,
+        post_id: post.id,
+      });
 
-      if (user.profile_picture) {
-        const oldFileName = user.profile_picture.split('/').pop();
-        await supabase.storage
-          .from('uploads')
-          .remove([`profile_pictures/${oldFileName}`]);
-      }
-
-      // Update user profile picture
-      const { error: updateError } = await supabase
-        .from('users')
-        .update({ profile_picture: publicUrl })
-        .eq('id', userId);
-
-      if (updateError) throw updateError;
-
-      res.json({ message: 'Profile picture updated', profilePicture: publicUrl });
-    } catch (err) {
-      console.error('Error uploading profile picture:', err);
-      res.status(500).json({ error: 'Failed to upload profile picture' });
+      if (imageError) throw imageError;
     }
+
+    res.status(201).json(post);
+  } catch (error) {
+    console.error('Error creating post:', error.message);
+    res.status(500).json({ error: 'Could not create post' });
   }
-);
-
-// Delete Profile
-app.delete(
-  '/api/profile',
-  authenticate,
-  async (req, res) => {
-    const userId = req.user.id;
-
-    try {
-      // Delete images from Supabase Storage
-      const { data: images } = await supabase
-        .from('images')
-        .select('path')
-        .eq('uploader_id', userId);
-
-      if (images.length > 0) {
-        const paths = images.map(img => img.path.split('/').slice(-2).join('/'));
-        await supabase.storage.from('uploads').remove(paths);
-      }
-
-      // Delete profile picture from Supabase Storage
-      const { data: user } = await supabase
-        .from('users')
-        .select('profile_picture')
-        .eq('id', userId)
-        .single();
-
-      if (user.profile_picture) {
-        const fileName = user.profile_picture.split('/').pop();
-        await supabase.storage
-          .from('uploads')
-          .remove([`profile_pictures/${fileName}`]);
-      }
-
-      // Delete related data
-      await supabase.from('images').delete().eq('uploader_id', userId);
-      await supabase.from('comments').delete().eq('author_id', userId);
-      await supabase.from('posts').delete().eq('author_id', userId);
-      await supabase.from('messages').delete().or(`sender_id.eq.${userId},receiver_id.eq.${userId}`);
-      await supabase.from('friends').delete().or(`user_id.eq.${userId},friend_id.eq.${userId}`);
-      await supabase.from('users').delete().eq('id', userId);
-
-      // Sign out and clear cookie
-      await supabase.auth.signOut();
-      res.clearCookie('token');
-      res.json({ message: 'Profile deleted successfully' });
-    } catch (err) {
-      console.error('Error deleting profile:', err);
-      res.status(500).json({ error: 'Failed to delete profile' });
-    }
-  }
-);
-
-// Post Routes
-app.post(
-  '/api/content',
-  authenticate,
-  async (req, res) => {
-    const { title, content } = req.body;
-    if (!title || !content) {
-      return res.status(400).json({ error: 'Title and content are required' });
-    }
-
-    try {
-      // Create post
-      const { data: post, error: postError } = await supabase
-        .from('posts')
-        .insert({ title, content, author_id: req.user.id })
-        .select()
-        .single();
-
-      if (postError) throw postError;
-
-      // Handle image upload if present
-      if (req.files && req.files.image) {
-        const file = req.files.image;
-        const allowedTypes = ['image/jpeg', 'image/png', 'image/gif'];
-        if (!allowedTypes.includes(file.mimetype)) {
-          return res.status(400).json({ error: 'Only JPG, PNG, and GIF images are allowed' });
-        }
-        if (file.size > 5 * 1024 * 1024) {
-          return res.status(400).json({ error: 'File size exceeds 5MB limit' });
-        }
-
-        const fileName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(file.name)}`;
-        const filePath = `post_images/${fileName}`;
-
-        const { error: uploadError } = await supabase.storage
-          .from('uploads')
-          .upload(filePath, file.data);
-
-        if (uploadError) throw uploadError;
-
-        const { data: { publicUrl } } = supabase.storage
-          .from('uploads')
-          .getPublicUrl(filePath);
-
-        await supabase.from('images').insert({
-          filename: fileName,
-          path: filePath,
-          mimetype: file.mimetype,
-          uploader_id: req.user.id,
-          post_id: post.id,
-        });
-      }
-
-      res.status(201).json(post);
-    } catch (err) {
-      console.error('Error creating post:', err);
-      res.status(500).json({ error: 'Could not create post' });
-    }
-  }
-);
+});
 
 app.get('/api/content', authenticate, async (req, res) => {
   try {
+    console.log('Fetching content for user:', req.user.id);
+
     const userId = req.user.id;
 
     const { data: posts, error } = await supabase
@@ -318,6 +350,8 @@ app.get('/api/content', authenticate, async (req, res) => {
 
     if (error) throw error;
 
+    console.log('Posts fetched:', posts?.length || 0);
+
     const formattedPosts = posts.map(post => ({
       ...post,
       likedByUser: post.post_likes.some(like => like.user_id === userId),
@@ -329,9 +363,10 @@ app.get('/api/content', authenticate, async (req, res) => {
       post_likes: undefined,
     }));
 
+    console.log('Sending response with posts:', formattedPosts.length);
     res.json({ posts: formattedPosts, user: req.user });
-  } catch (err) {
-    console.error('Failed to fetch posts:', err);
+  } catch (error) {
+    console.error('Failed to fetch posts:', error.message);
     res.status(500).json({ error: 'Failed to fetch posts' });
   }
 });
@@ -361,8 +396,8 @@ app.get('/api/content/:id', authenticate, async (req, res) => {
     }));
 
     res.json({ post: { ...post, images: imageUrls } });
-  } catch (err) {
-    console.error('Error fetching post:', err);
+  } catch (error) {
+    console.error('Error fetching post:', error.message);
     res.status(500).json({ error: 'Failed to fetch post' });
   }
 });
@@ -392,8 +427,8 @@ app.put('/api/content/:id', authenticate, async (req, res) => {
 
     if (updateError) throw updateError;
     res.json(updated);
-  } catch (err) {
-    console.error('Error updating post:', err);
+  } catch (error) {
+    console.error('Error updating post:', error.message);
     res.status(500).json({ error: 'Failed to update post' });
   }
 });
@@ -418,17 +453,19 @@ app.delete('/api/content/:id', authenticate, async (req, res) => {
       .select('filename')
       .eq('post_id', postId);
 
-    if (images.length > 0) {
+    if (images?.length > 0) {
       const paths = images.map(img => `post_images/${img.filename}`);
-      await supabase.storage.from('uploads').remove(paths);
+      await deleteStorageFiles('uploads', paths);
     }
 
-    await supabase.from('images').delete().eq('post_id', postId);
-    await supabase.from('posts').delete().eq('id', postId);
+    await Promise.all([
+      supabase.from('images').delete().eq('post_id', postId),
+      supabase.from('posts').delete().eq('id', postId),
+    ]);
 
-    res.json({ message: 'Post deleted' });
-  } catch (err) {
-    console.error('Error deleting post:', err);
+    res.json({ message: 'Post deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting post:', error.message);
     res.status(500).json({ error: 'Failed to delete post' });
   }
 });
@@ -459,8 +496,8 @@ app.post('/api/comments', authenticate, async (req, res) => {
 
     if (commentError) throw commentError;
     res.status(201).json(comment);
-  } catch (err) {
-    console.error('Error creating comment:', err);
+  } catch (error) {
+    console.error('Error creating comment:', error.message);
     res.status(500).json({ error: 'Failed to create comment' });
   }
 });
@@ -491,8 +528,8 @@ app.get('/api/comments/:postId', authenticate, async (req, res) => {
     }));
 
     res.json(formattedComments);
-  } catch (err) {
-    console.error('Error fetching comments:', err);
+  } catch (error) {
+    console.error('Error fetching comments:', error.message);
     res.status(500).json({ error: 'Failed to fetch comments' });
   }
 });
@@ -500,8 +537,12 @@ app.get('/api/comments/:postId', authenticate, async (req, res) => {
 // Profile Route
 app.get('/api/profile', authenticate, async (req, res) => {
   try {
+    console.log('Fetching profile for user:', req.user.id);
+
     const userId = req.user.id;
-    const id = req.query.id ? req.query.id : userId;
+    const id = req.query.id || userId;
+
+    console.log('Profile ID to fetch:', id);
 
     const { data: profileUser, error: userError } = await supabase
       .from('users')
@@ -509,7 +550,12 @@ app.get('/api/profile', authenticate, async (req, res) => {
       .eq('id', id)
       .single();
 
-    if (userError || !profileUser) return res.status(404).json({ message: 'User not found' });
+    if (userError || !profileUser) {
+      console.error('User fetch error:', userError?.message);
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    console.log('Profile user found:', profileUser.username);
 
     const { data: posts, error: postsError } = await supabase
       .from('posts')
@@ -521,6 +567,8 @@ app.get('/api/profile', authenticate, async (req, res) => {
       .order('created_at', { ascending: false });
 
     if (postsError) throw postsError;
+
+    console.log('Posts found:', posts?.length || 0);
 
     const formattedPosts = posts.map(post => ({
       ...post,
@@ -553,16 +601,18 @@ app.get('/api/profile', authenticate, async (req, res) => {
 
     if (requestsError) throw requestsError;
 
+    console.log('Sending profile response');
+
     res.json({
-      viewer: { ...req.user, profilePicture: req.user.metadata.profile_picture },
+      viewer: req.user,
       profileUser,
       posts: formattedPosts,
-      friends,
-      incomingRequests,
+      friends: friends || [],
+      incomingRequests: incomingRequests || [],
     });
-  } catch (err) {
-    console.error('Error loading profile:', err);
-    res.status(500).json({ message: 'Failed to load profile' });
+  } catch (error) {
+    console.error('Error loading profile:', error.message);
+    res.status(500).json({ error: 'Failed to load profile' });
   }
 });
 
@@ -573,7 +623,7 @@ app.post('/api/profile/:id', authenticate, async (req, res) => {
     const userId = req.user.id;
 
     if (userId === friendId) {
-      return res.status(400).json({ message: 'You cannot add yourself' });
+      return res.status(400).json({ error: 'You cannot add yourself' });
     }
 
     const { data: friendExists, error: userError } = await supabase
@@ -591,7 +641,7 @@ app.post('/api/profile/:id', authenticate, async (req, res) => {
       .single();
 
     if (existing) {
-      return res.status(400).json({ message: 'Friend request or friendship already exists' });
+      return res.status(400).json({ error: 'Friend request or friendship already exists' });
     }
 
     const { data: newFriend, error: createError } = await supabase
@@ -606,9 +656,9 @@ app.post('/api/profile/:id', authenticate, async (req, res) => {
     if (createError) throw createError;
 
     res.status(201).json({ message: 'Friend request sent', data: newFriend });
-  } catch (err) {
-    console.error('Error adding friend:', err);
-    res.status(500).json({ message: 'Cannot add friend' });
+  } catch (error) {
+    console.error('Error adding friend:', error.message);
+    res.status(500).json({ error: 'Cannot add friend' });
   }
 });
 
@@ -631,23 +681,21 @@ app.post('/api/content/:id/like', authenticate, async (req, res) => {
 
     if (existingLike) {
       // Unlike
-      await supabase.from('post_likes').delete().eq('id', existingLike.id);
-      await supabase
-        .from('posts')
-        .update({ likes: supabase.raw('likes - 1') })
-        .eq('id', postId);
+      await Promise.all([
+        supabase.from('post_likes').delete().eq('id', existingLike.id),
+        supabase.rpc('decrement_post_likes', { post_id: postId }),
+      ]);
       return res.json({ liked: false });
     } else {
       // Like
-      await supabase.from('post_likes').insert({ user_id: userId, post_id: postId });
-      await supabase
-        .from('posts')
-        .update({ likes: supabase.raw('likes + 1') })
-        .eq('id', postId);
+      await Promise.all([
+        supabase.from('post_likes').insert({ user_id: userId, post_id: postId }),
+        supabase.rpc('increment_post_likes', { post_id: postId }),
+      ]);
       return res.json({ liked: true });
     }
-  } catch (err) {
-    console.error('Error toggling post like:', err);
+  } catch (error) {
+    console.error('Error toggling post like:', error.message);
     res.status(500).json({ error: 'Failed to toggle post like' });
   }
 });
@@ -678,8 +726,8 @@ app.post('/api/comments/:id/like', authenticate, async (req, res) => {
       await supabase.from('comment_likes').insert({ user_id: userId, comment_id: commentId });
       return res.json({ liked: true });
     }
-  } catch (err) {
-    console.error('Error toggling comment like:', err);
+  } catch (error) {
+    console.error('Error toggling comment like:', error.message);
     res.status(500).json({ error: 'Failed to toggle comment like' });
   }
 });
@@ -699,15 +747,15 @@ app.post('/api/profile/accept/:requestId', authenticate, async (req, res) => {
       .single();
 
     if (fetchError || !friendRequest) {
-      return res.status(404).json({ message: 'Friend request not found' });
+      return res.status(404).json({ error: 'Friend request not found' });
     }
 
     if (friendRequest.friend_id !== userId) {
-      return res.status(403).json({ message: 'Not authorized to accept this request' });
+      return res.status(403).json({ error: 'Not authorized to accept this request' });
     }
 
     if (friendRequest.friended) {
-      return res.status(400).json({ message: 'Request already accepted' });
+      return res.status(400).json({ error: 'Request already accepted' });
     }
 
     await supabase
@@ -733,9 +781,9 @@ app.post('/api/profile/accept/:requestId', authenticate, async (req, res) => {
     }
 
     res.json({ message: 'Friend request accepted' });
-  } catch (err) {
-    console.error('Error accepting friend request:', err);
-    res.status(500).json({ message: 'Cannot accept friend request' });
+  } catch (error) {
+    console.error('Error accepting friend request:', error.message);
+    res.status(500).json({ error: 'Cannot accept friend request' });
   }
 });
 
@@ -774,9 +822,9 @@ app.delete('/api/profile/unfriend/:friendId', authenticate, async (req, res) => 
       .or(`and(user_id.eq.${userId},friend_id.eq.${friendId}),and(user_id.eq.${friendId},friend_id.eq.${userId})`);
 
     res.json({ message: 'Unfriended successfully' });
-  } catch (err) {
-    console.error('Error unfriending:', err);
-    res.status(500).json({ message: 'Failed to unfriend' });
+  } catch (error) {
+    console.error('Error unfriending:', error.message);
+    res.status(500).json({ error: 'Failed to unfriend' });
   }
 });
 
@@ -813,9 +861,9 @@ app.get('/api/message/:id', authenticate, async (req, res) => {
     }));
 
     res.json({ messages: formattedMessages });
-  } catch (err) {
-    console.error('Error retrieving messages:', err);
-    res.status(500).json({ message: 'Cannot retrieve messages' });
+  } catch (error) {
+    console.error('Error retrieving messages:', error.message);
+    res.status(500).json({ error: 'Cannot retrieve messages' });
   }
 });
 
@@ -858,9 +906,9 @@ app.post('/api/message/:id', authenticate, async (req, res) => {
         senderName: `${message.sender.first_name} ${message.sender.last_name} (@${message.sender.username})`,
       },
     });
-  } catch (err) {
-    console.error('Error sending message:', err);
-    res.status(500).json({ message: 'Cannot send message' });
+  } catch (error) {
+    console.error('Error sending message:', error.message);
+    res.status(500).json({ error: 'Cannot send message' });
   }
 });
 
@@ -896,30 +944,30 @@ app.delete('/api/profile/:id', authenticate, async (req, res) => {
       .select('path')
       .eq('uploader_id', targetId);
 
-    if (images.length > 0) {
+    if (images?.length > 0) {
       const paths = images.map(img => img.path.split('/').slice(-2).join('/'));
-      await supabase.storage.from('uploads').remove(paths);
+      await deleteStorageFiles('uploads', paths);
     }
 
     // Delete profile picture
     if (targetUser.profile_picture) {
       const fileName = targetUser.profile_picture.split('/').pop();
-      await supabase.storage
-        .from('uploads')
-        .remove([`profile_pictures/${fileName}`]);
+      await deleteStorageFiles('uploads', [`profile_pictures/${fileName}`]);
     }
 
     // Delete related data
-    await supabase.from('images').delete().eq('uploader_id', targetId);
-    await supabase.from('comments').delete().eq('author_id', targetId);
-    await supabase.from('posts').delete().eq('author_id', targetId);
-    await supabase.from('messages').delete().or(`sender_id.eq.${targetId},receiver_id.eq.${targetId}`);
-    await supabase.from('friends').delete().or(`user_id.eq.${targetId},friend_id.eq.${targetId}`);
-    await supabase.from('users').delete().eq('id', targetId);
+    await Promise.all([
+      supabase.from('images').delete().eq('uploader_id', targetId),
+      supabase.from('comments').delete().eq('author_id', targetId),
+      supabase.from('posts').delete().eq('author_id', targetId),
+      supabase.from('messages').delete().or(`sender_id.eq.${targetId},receiver_id.eq.${targetId}`),
+      supabase.from('friends').delete().or(`user_id.eq.${targetId},friend_id.eq.${targetId}`),
+      supabase.from('users').delete().eq('id', targetId),
+    ]);
 
     res.json({ message: 'Profile deleted successfully' });
-  } catch (err) {
-    console.error('Error deleting profile:', err);
+  } catch (error) {
+    console.error('Error deleting profile:', error.message);
     res.status(500).json({ error: 'Failed to delete profile' });
   }
 });
@@ -941,9 +989,7 @@ app.delete('/api/profile/picture', authenticate, async (req, res) => {
 
     // Delete profile picture from Supabase Storage
     const fileName = user.profile_picture.split('/').pop();
-    await supabase.storage
-      .from('uploads')
-      .remove([`profile_pictures/${fileName}`]);
+    await deleteStorageFiles('uploads', [`profile_pictures/${fileName}`]);
 
     // Update user
     const { error: updateError } = await supabase
@@ -954,15 +1000,15 @@ app.delete('/api/profile/picture', authenticate, async (req, res) => {
     if (updateError) throw updateError;
 
     res.json({ message: 'Profile picture deleted successfully' });
-  } catch (err) {
-    console.error('Error deleting profile picture:', err);
+  } catch (error) {
+    console.error('Error deleting profile picture:', error.message);
     res.status(500).json({ error: 'Failed to delete profile picture' });
   }
 });
 
 // Error Handling Middleware
 app.use((err, req, res, next) => {
-  console.error('Unexpected error:', err);
+  console.error('Unexpected error:', err.message);
   res.status(500).json({ error: 'Internal server error' });
 });
 
@@ -972,10 +1018,13 @@ app.get('/', (req, res) => {
   res.send('Backend is running. Use /api/* routes.');
 });
 
-app.listen(PORT, () => console.log(`🚀 Server running on http://localhost:${PORT}`));
+const server = app.listen(PORT, () => console.log(`🚀 Server running on http://localhost:${PORT}`));
 
 // Graceful Shutdown
-process.on('SIGTERM', async () => {
+process.on('SIGTERM', () => {
   console.log('SIGTERM received. Closing server...');
-  process.exit(0);
+  server.close(() => {
+    console.log('Server closed.');
+    process.exit(0);
+  });
 });
