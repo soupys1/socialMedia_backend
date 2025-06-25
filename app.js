@@ -119,6 +119,8 @@ app.post('/api/signup', async (req, res) => {
   }
 });
 
+app.options('/api/login', cors());
+
 app.post('/api/login', async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) {
@@ -139,9 +141,9 @@ app.post('/api/login', async (req, res) => {
     console.log('Login successful, setting cookie');
     res.cookie('token', data.session.access_token, {
       httpOnly: true,
-      secure: true, // Required for sameSite: 'none'
-      sameSite: 'none',
-      maxAge: 24 * 60 * 60 * 1000, // 24 hours
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      maxAge: 24 * 60 * 60 * 1000,
     });
 
     res.json({ message: 'Login successful', user: data.user });
@@ -150,7 +152,6 @@ app.post('/api/login', async (req, res) => {
     res.status(500).json({ error: 'Failed to log in' });
   }
 });
-
 app.post('/api/logout', authenticate, async (req, res) => {
   try {
     const token = req.cookies.token;
