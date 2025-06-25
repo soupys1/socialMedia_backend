@@ -19,9 +19,10 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 
 // Middleware
 app.use(cors({
-  origin: process.env.CLIENT_URL,
+  origin: 'https://social-media-frontend-c79j.vercel.app',
   credentials: true,
 }));
+
 app.use(bodyParser.json());
 app.use(cookieParser());
 app.disable('x-powered-by');
