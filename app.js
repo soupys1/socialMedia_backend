@@ -97,46 +97,64 @@ app.post('/api/signup', async (req, res) => {
   }
 
   try {
-    // Check for existing username or email
-    const { data: existingUser } = await supabase
+    // Check for existing username or email in the users table
+    const { data: existingUsers, error: checkError } = await supabase
       .from('users')
       .select('id')
-      .or(`username.eq.${username},email.eq.${email}`)
-      .single();
+      .or(`username.eq.${username},email.eq.${email}`);
 
-    if (existingUser) {
+    if (checkError) {
+      console.error('Error checking existing user:', checkError);
+      throw checkError;
+    }
+
+    if (existingUsers && existingUsers.length > 0) {
       return res.status(400).json({ error: 'Username or email already in use' });
     }
 
-    // Sign up user with Supabase Auth
+    // Sign up user with Supabase Auth only
+    // The database trigger will automatically create the user profile
     const { data: authUser, error: authError } = await supabase.auth.signUp({
       email,
       password,
       options: {
-        data: { username, firstName, lastName },
+        data: { 
+          username, 
+          first_name: firstName, 
+          last_name: lastName 
+        },
       },
     });
 
-    if (authError) throw authError;
+    if (authError) {
+      console.error('Supabase Auth signup error:', authError);
+      throw authError;
+    }
 
-    // Insert user into users table
-    const { error: dbError } = await supabase
-      .from('users')
-      .insert({
+    if (!authUser.user) {
+      throw new Error('No user returned from Supabase Auth');
+    }
+
+    console.log('User created successfully in Supabase Auth:', authUser.user.id);
+    res.status(201).json({ 
+      message: 'User created successfully',
+      user: {
         id: authUser.user.id,
-        username,
-        first_name: firstName,
-        last_name: lastName,
-        email,
-        password
-      });
-
-    if (dbError) throw dbError;
-
-    res.status(201).json({ message: 'User created successfully' });
+        email: authUser.user.email
+      }
+    });
   } catch (error) {
     console.error('Signup error:', error.message);
-    res.status(500).json({ error: 'Failed to sign up' });
+    
+    // Provide more specific error messages
+    if (error.message.includes('already registered')) {
+      return res.status(400).json({ error: 'Email already registered' });
+    }
+    if (error.message.includes('password')) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+    
+    res.status(500).json({ error: 'Failed to sign up. Please try again.' });
   }
 });
 
