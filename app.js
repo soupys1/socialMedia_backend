@@ -21,7 +21,7 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 
 // Middleware
 app.use(cors({
-  origin: 'https://social-media-frontend-ezqu.vercel.app', // Preserved as requested
+  origin: 'https://social-media-frontend-black-five.vercel.app/', // Preserved as requested
   credentials: true,
 }));
 
