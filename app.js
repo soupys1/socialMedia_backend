@@ -550,68 +550,14 @@ app.get('/api/profile', authenticate, async (req, res) => {
       .from('users')
       .select('id, username, first_name, last_name, email, profile_picture')
       .eq('id', id)
-      .single();
+      .maybeSingle();
 
     if (userError || !profileUser) {
       console.error('User fetch error:', userError?.message);
       return res.status(404).json({ error: 'User not found' });
     }
 
-    console.log('Profile user found:', profileUser.username);
-
-    const { data: posts, error: postsError } = await supabase
-      .from('posts')
-      .select(`
-        *,
-        images(id, filename, created_at)
-      `)
-      .eq('author_id', id)
-      .order('created_at', { ascending: false });
-
-    if (postsError) throw postsError;
-
-    console.log('Posts found:', posts?.length || 0);
-
-    const formattedPosts = posts.map(post => ({
-      ...post,
-      images: post.images.map(img => ({
-        id: img.id,
-        url: `${process.env.SUPABASE_URL}/storage/v1/object/public/uploads/post_images/${img.filename}`,
-        uploadedAt: img.created_at,
-      })),
-    }));
-
-    const { data: friends, error: friendsError } = await supabase
-      .from('friends')
-      .select(`
-        *,
-        friend:users(id, username, first_name, last_name, profile_picture)
-      `)
-      .eq('user_id', id)
-      .eq('friended', true);
-
-    if (friendsError) throw friendsError;
-
-    const { data: incomingRequests, error: requestsError } = await supabase
-      .from('friends')
-      .select(`
-        *,
-        user:users(id, username, first_name, last_name, profile_picture)
-      `)
-      .eq('friend_id', userId)
-      .eq('friended', false);
-
-    if (requestsError) throw requestsError;
-
-    console.log('Sending profile response');
-
-    res.json({
-      viewer: req.user,
-      profileUser,
-      posts: formattedPosts,
-      friends: friends || [],
-      incomingRequests: incomingRequests || [],
-    });
+    // ...rest of your code
   } catch (error) {
     console.error('Error loading profile:', error.message);
     res.status(500).json({ error: 'Failed to load profile' });
