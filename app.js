@@ -569,7 +569,7 @@ app.post('/api/profile/:id', authenticate, async (req, res) => {
       .insert({ user_id: userId, friend_id: friendId, friended: false })
       .select(`
         *,
-        friend:users(id, username, first_name, last_name, profile_picture)
+        friend:users!friends_friend_id_fkey(id, username, first_name, last_name, profile_picture)
       `)
       .single();
 
