@@ -108,6 +108,7 @@ app.post('/api/signup', async (req, res) => {
         first_name: firstName,
         last_name: lastName,
         email,
+        password
       });
 
     if (dbError) throw dbError;
@@ -373,7 +374,7 @@ app.get('/api/content', authenticate, async (req, res) => {
 });
 
 app.get('/api/content/:id', authenticate, async (req, res) => {
-  const postId = parseInt(req.params.id);
+  const postId = req.params.id;
   if (isNaN(postId)) return res.status(400).json({ error: 'Invalid post ID' });
 
   try {
@@ -404,7 +405,7 @@ app.get('/api/content/:id', authenticate, async (req, res) => {
 });
 
 app.put('/api/content/:id', authenticate, async (req, res) => {
-  const postId = parseInt(req.params.id);
+  const postId = req.params.id;
   const { title, content } = req.body;
   if (isNaN(postId)) return res.status(400).json({ error: 'Invalid post ID' });
   if (!title || !content) return res.status(400).json({ error: 'Title and content are required' });
@@ -435,7 +436,7 @@ app.put('/api/content/:id', authenticate, async (req, res) => {
 });
 
 app.delete('/api/content/:id', authenticate, async (req, res) => {
-  const postId = parseInt(req.params.id);
+  const postId = req.params.id;
   if (isNaN(postId)) return res.status(400).json({ error: 'Invalid post ID' });
 
   try {
@@ -480,7 +481,7 @@ app.post('/api/comments', authenticate, async (req, res) => {
     const { data: post, error: postError } = await supabase
       .from('posts')
       .select('id')
-      .eq('id', parseInt(postId))
+      .eq('id', postId)
       .single();
 
     if (postError || !post) return res.status(404).json({ error: 'Post not found' });
@@ -489,7 +490,7 @@ app.post('/api/comments', authenticate, async (req, res) => {
       .from('comments')
       .insert({
         content,
-        post_id: parseInt(postId),
+        post_id: postId,
         author_id: req.user.id,
       })
       .select()
@@ -504,7 +505,7 @@ app.post('/api/comments', authenticate, async (req, res) => {
 });
 
 app.get('/api/comments/:postId', authenticate, async (req, res) => {
-  const postId = parseInt(req.params.postId);
+  const postId = req.params.postId;
   const userId = req.user.id;
 
   if (isNaN(postId)) return res.status(400).json({ error: 'Invalid post ID' });
@@ -665,7 +666,7 @@ app.post('/api/profile/:id', authenticate, async (req, res) => {
 
 // Toggle Post Like
 app.post('/api/content/:id/like', authenticate, async (req, res) => {
-  const postId = parseInt(req.params.id);
+  const postId = req.params.id;
   const userId = req.user.id;
 
   if (isNaN(postId)) return res.status(400).json({ error: 'Invalid post ID' });
@@ -703,7 +704,7 @@ app.post('/api/content/:id/like', authenticate, async (req, res) => {
 
 // Toggle Comment Like
 app.post('/api/comments/:id/like', authenticate, async (req, res) => {
-  const commentId = parseInt(req.params.id);
+  const commentId = req.params.id;
   const userId = req.user.id;
 
   if (isNaN(commentId)) return res.status(400).json({ error: 'Invalid comment ID' });
@@ -736,7 +737,7 @@ app.post('/api/comments/:id/like', authenticate, async (req, res) => {
 // Accept Friend Request
 app.post('/api/profile/accept/:requestId', authenticate, async (req, res) => {
   try {
-    const requestId = parseInt(req.params.requestId);
+    const requestId = req.params.requestId;
     const userId = req.user.id;
 
     if (isNaN(requestId)) return res.status(400).json({ error: 'Invalid request ID' });
