@@ -251,7 +251,7 @@ app.post('/api/profile/picture', authenticate, async (req, res) => {
   }
 });
 
-// Enhanced Profile Route
+// Enhanced Profile Route with robust error handling and explicit foreign key joins
 app.get('/api/profile', authenticate, async (req, res) => {
   try {
     console.log('Fetching profile for user:', req.user.id);
@@ -267,14 +267,18 @@ app.get('/api/profile', authenticate, async (req, res) => {
       .eq('id', id)
       .single();
 
-    if (userError || !profileUser) {
-      console.error('User fetch error:', userError?.message);
+    if (userError) {
+      console.error('User fetch error:', userError.message, userError);
+      return res.status(404).json({ error: 'User not found (db error)' });
+    }
+    if (!profileUser) {
+      console.error('User fetch error: No user found for id', id);
       return res.status(404).json({ error: 'User not found' });
     }
 
     // Validate and fix profile picture
     profileUser.profile_picture = validateProfilePicture(profileUser.profile_picture);
-    
+
     // If profile picture was invalid, update the database
     if (profileUser.profile_picture !== req.query.profile_picture) {
       await supabase
@@ -294,40 +298,54 @@ app.get('/api/profile', authenticate, async (req, res) => {
       .eq('author_id', id)
       .order('created_at', { ascending: false });
 
-    if (postsError) throw postsError;
+    if (postsError) {
+      console.error('Posts fetch error:', postsError.message, postsError);
+      return res.status(500).json({ error: 'Failed to load posts' });
+    }
 
-    console.log('Posts found:', posts?.length || 0);
-
-    const formattedPosts = posts.map(post => ({
+    const formattedPosts = (posts || []).map(post => ({
       ...post,
-      images: post.images.map(img => ({
+      images: (post.images || []).map(img => ({
         id: img.id,
         url: `${process.env.SUPABASE_URL}/storage/v1/object/public/uploads/post_images/${img.filename}`,
         uploadedAt: img.created_at,
       })),
     }));
 
-    const { data: friends, error: friendsError } = await supabase
-      .from('friends')
-      .select(`
-        *,
-        friend:users(id, username, first_name, last_name, profile_picture)
-      `)
-      .eq('user_id', id)
-      .eq('friended', true);
-
-    if (friendsError) throw friendsError;
-
-    const { data: incomingRequests, error: requestsError } = await supabase
-      .from('friends')
-      .select(`
-        *,
-        user:users(id, username, first_name, last_name, profile_picture)
-      `)
-      .eq('friend_id', userId)
-      .eq('friended', false);
-
-    if (requestsError) throw requestsError;
+    let friends = [];
+    let incomingRequests = [];
+    try {
+      // Explicit join on friend_id foreign key
+      const { data: friendsData, error: friendsError } = await supabase
+        .from('friends')
+        .select(`
+          *,
+          friend:users!friends_friend_id_fkey(id, username, first_name, last_name, profile_picture)
+        `)
+        .eq('user_id', id)
+        .eq('friended', true);
+      if (friendsError) throw friendsError;
+      friends = friendsData || [];
+    } catch (err) {
+      console.error('Friends fetch error:', err.message, err);
+      friends = [];
+    }
+    try {
+      // Explicit join on user_id foreign key for incoming requests
+      const { data: requestsData, error: requestsError } = await supabase
+        .from('friends')
+        .select(`
+          *,
+          user:users!friends_user_id_fkey(id, username, first_name, last_name, profile_picture)
+        `)
+        .eq('friend_id', userId)
+        .eq('friended', false);
+      if (requestsError) throw requestsError;
+      incomingRequests = requestsData || [];
+    } catch (err) {
+      console.error('Incoming requests fetch error:', err.message, err);
+      incomingRequests = [];
+    }
 
     console.log('Sending profile response');
 
@@ -335,12 +353,12 @@ app.get('/api/profile', authenticate, async (req, res) => {
       viewer: req.user,
       profileUser,
       posts: formattedPosts,
-      friends: friends || [],
-      incomingRequests: incomingRequests || [],
+      friends,
+      incomingRequests,
     });
   } catch (error) {
-    console.error('Error loading profile:', error.message);
-    res.status(500).json({ error: 'Failed to load profile' });
+    console.error('Error loading profile:', error.message, error.stack);
+    res.status(500).json({ error: 'Failed to load profile', details: error.message });
   }
 });
 
