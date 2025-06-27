@@ -702,15 +702,14 @@ app.get('/api/message/:id', authenticate, async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    // Check if they are friends
-    const { data: friendship, error: friendError } = await req.supabase
+    // Check if they are friends in both directions
+    const { data: friendships, error: friendError } = await req.supabase
       .from('friends')
       .select('id, user_id, friend_id, friended')
-      .or(`and(user_id.eq.${userId},friend_id.eq.${friendId},friended.eq.true),and(user_id.eq.${friendId},friend_id.eq.${userId},friended.eq.true)`)
-      .single();
+      .or(`and(user_id.eq.${userId},friend_id.eq.${friendId},friended.eq.true),and(user_id.eq.${friendId},friend_id.eq.${userId},friended.eq.true)`);
 
-    if (friendError || !friendship) {
-      console.error('Friendship check failed:', friendError?.message, 'Friendship data:', friendship);
+    if (friendError || !friendships || friendships.length < 2) {
+      console.error('Friendship check failed:', friendError?.message, 'Friendship data:', friendships);
       return res.status(403).json({ error: 'You can only message your friends' });
     }
 
