@@ -587,7 +587,7 @@ app.post('/api/content/:id/like', authenticate, async (req, res) => {
   const postId = req.params.id;
   const userId = req.user.id;
 
-  if (isNaN(postId)) return res.status(400).json({ error: 'Invalid post ID' });
+  if (!postId) return res.status(400).json({ error: 'Invalid post ID' });
 
   try {
     const { data: existingLike, error: fetchError } = await supabase
@@ -732,6 +732,69 @@ app.post('/api/message/:id', authenticate, async (req, res) => {
   } catch (error) {
     console.error('Error sending message:', error.message);
     res.status(500).json({ error: 'Cannot send message' });
+  }
+});
+
+// User Routes
+app.get('/api/users', authenticate, async (req, res) => {
+  try {
+    const { data: users, error } = await supabase
+      .from('users')
+      .select('id, username, first_name, last_name, profile_picture');
+    if (error) throw error;
+    res.json({ users });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
+// Post Comment Routes
+app.post('/api/content/:id/comment', authenticate, async (req, res) => {
+  const postId = req.params.id;
+  const { content } = req.body;
+  if (!content) return res.status(400).json({ error: 'Content required' });
+  try {
+    const { data: comment, error } = await supabase
+      .from('comments')
+      .insert({ post_id: postId, author_id: req.user.id, content })
+      .select()
+      .single();
+    if (error) throw error;
+    res.status(201).json(comment);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to add comment' });
+  }
+});
+
+// Delete Post Routes
+app.delete('/api/content/:id', authenticate, async (req, res) => {
+  const postId = req.params.id;
+  try {
+    const { error } = await supabase
+      .from('posts')
+      .delete()
+      .eq('id', postId)
+      .eq('author_id', req.user.id);
+    if (error) throw error;
+    res.json({ message: 'Post deleted' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to delete post' });
+  }
+});
+
+// Accept Friend Request
+app.post('/api/profile/accept/:id', authenticate, async (req, res) => {
+  const requestId = req.params.id;
+  try {
+    const { error } = await supabase
+      .from('friends')
+      .update({ friended: true })
+      .eq('id', requestId)
+      .eq('friend_id', req.user.id);
+    if (error) throw error;
+    res.json({ message: 'Friend request accepted' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to accept friend request' });
   }
 });
 
