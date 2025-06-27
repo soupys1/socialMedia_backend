@@ -321,12 +321,16 @@ app.get('/api/profile', authenticate, async (req, res) => {
 
     const formattedPosts = posts.map(post => ({
       ...post,
-      likedByUser: post.post_likes.some(like => like.user_id === userId),
+      likedByUser: (post.post_likes || []).some(like => like.user_id === userId),
       likes: post.likes || 0, // Ensure likes count is included
       images: (post.images || []).map(img => ({
         id: img.id,
         url: `${process.env.SUPABASE_URL}/storage/v1/object/public/uploads/post_images/${img.filename}`,
         uploadedAt: img.created_at,
+      })),
+      comments: (post.comments || []).map(comment => ({
+        ...comment,
+        author: comment.author || {},
       })),
       post_likes: undefined, // Remove the raw post_likes data
     }));
@@ -468,12 +472,16 @@ app.get('/api/content', authenticate, async (req, res) => {
 
     const formattedPosts = posts.map(post => ({
       ...post,
-      likedByUser: post.post_likes.some(like => like.user_id === userId),
+      likedByUser: (post.post_likes || []).some(like => like.user_id === userId),
       likes: post.likes || 0, // Ensure likes count is included
       images: (post.images || []).map(img => ({
         id: img.id,
         url: `${process.env.SUPABASE_URL}/storage/v1/object/public/uploads/post_images/${img.filename}`,
         uploadedAt: img.created_at,
+      })),
+      comments: (post.comments || []).map(comment => ({
+        ...comment,
+        author: comment.author || {},
       })),
       post_likes: undefined, // Remove the raw post_likes data
     }));
@@ -533,7 +541,7 @@ app.get('/api/comments/:postId', authenticate, async (req, res) => {
 
     const formattedComments = comments.map(comment => ({
       ...comment,
-      likedByUser: comment.comment_likes.some(like => like.user_id === userId),
+      likedByUser: (comment.comment_likes || []).some(like => like.user_id === userId),
       comment_likes: undefined,
     }));
 
