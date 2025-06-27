@@ -733,6 +733,8 @@ app.get('/api/message/:id', authenticate, async (req, res) => {
       ...msg,
       isSender: msg.sender_id === userId,
       senderName: `${msg.sender.first_name} ${msg.sender.last_name} (@${msg.sender.username})`,
+      senderProfilePic: msg.sender?.profile_picture || null,
+      receiverProfilePic: msg.receiver?.profile_picture || null,
     }));
 
     res.json({ messages: formattedMessages });
