@@ -338,12 +338,12 @@ app.get('/api/profile', authenticate, async (req, res) => {
     let friends = [];
     let incomingRequests = [];
     try {
-      // Fetch friends with simpler join
+      // Explicit join on friend_id foreign key for accepted friends
       const { data: friendsData, error: friendsError } = await supabase
         .from('friends')
         .select(`
           *,
-          friend:users(id, username, first_name, last_name, profile_picture)
+          friend:users!friends_friend_id_fkey(id, username, first_name, last_name, profile_picture)
         `)
         .eq('user_id', id)
         .eq('friended', true);
@@ -354,12 +354,12 @@ app.get('/api/profile', authenticate, async (req, res) => {
       friends = [];
     }
     try {
-      // Fetch incoming requests with simpler join
+      // Explicit join on user_id foreign key for incoming requests
       const { data: requestsData, error: requestsError } = await supabase
         .from('friends')
         .select(`
           *,
-          user:users(id, username, first_name, last_name, profile_picture)
+          user:users!friends_user_id_fkey(id, username, first_name, last_name, profile_picture)
         `)
         .eq('friend_id', userId)
         .eq('friended', false);
