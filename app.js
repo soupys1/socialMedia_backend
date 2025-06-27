@@ -8,7 +8,7 @@ const path = require('path');
 const { createClient } = require('@supabase/supabase-js');
 
 // Environment variable validation
-const requiredEnvVars = ['SUPABASE_URL', 'SUPABASE_KEY'];
+const requiredEnvVars = ['SUPABASE_URL', 'SUPABASE_ANON_KEY'];
 for (const envVar of requiredEnvVars) {
   if (!process.env[envVar]) {
     console.error(`Missing required environment variable: ${envVar}`);
@@ -17,7 +17,7 @@ for (const envVar of requiredEnvVars) {
 }
 
 const app = express();
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
 // Enhanced CORS configuration for cross-site cookies
 app.use(cors({
