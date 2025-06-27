@@ -571,6 +571,7 @@ app.post('/api/profile/:id', authenticate, async (req, res) => {
     const userId = req.user.id;
 
     if (userId === friendId) {
+      console.warn('Attempted to send friend request to self:', userId);
       return res.status(400).json({ error: 'You cannot add yourself' });
     }
 
@@ -704,12 +705,12 @@ app.get('/api/message/:id', authenticate, async (req, res) => {
     // Check if they are friends
     const { data: friendship, error: friendError } = await req.supabase
       .from('friends')
-      .select('id')
+      .select('id, user_id, friend_id, friended')
       .or(`and(user_id.eq.${userId},friend_id.eq.${friendId},friended.eq.true),and(user_id.eq.${friendId},friend_id.eq.${userId},friended.eq.true)`)
       .single();
 
     if (friendError || !friendship) {
-      console.error('Friendship check failed:', friendError?.message);
+      console.error('Friendship check failed:', friendError?.message, 'Friendship data:', friendship);
       return res.status(403).json({ error: 'You can only message your friends' });
     }
 
