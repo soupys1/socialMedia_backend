@@ -461,7 +461,7 @@ app.get('/api/content', authenticate, async (req, res) => {
           id,
           content,
           created_at,
-          author:users(id, username, profile_picture)
+          author:users!comments_author_id_fkey(id, username, profile_picture)
         )
       `)
       .order('id', { ascending: false });
@@ -562,21 +562,14 @@ app.post('/api/profile/:id', authenticate, async (req, res) => {
       return res.status(400).json({ error: 'You cannot add yourself' });
     }
 
-    const { data: friendExists, error: userError } = await supabase
-      .from('users')
-      .select('id')
-      .eq('id', friendId)
-      .single();
-
-    if (userError || !friendExists) return res.status(404).json({ error: 'User not found' });
-
+    // Check for existing friend request or friendship in either direction
     const { data: existing, error: existingError } = await supabase
       .from('friends')
-      .select('id')
-      .or(`and(user_id.eq.${userId},friend_id.eq.${friendId}),and(user_id.eq.${friendId},friend_id.eq.${userId})`)
-      .single();
+      .select('id, friended')
+      .or(`and(user_id.eq.${userId},friend_id.eq.${friendId}),and(user_id.eq.${friendId},friend_id.eq.${userId})`);
 
-    if (existing) {
+    if (existing && existing.length > 0) {
+      // If any request or friendship exists, block duplicate
       return res.status(400).json({ error: 'Friend request or friendship already exists' });
     }
 
@@ -696,8 +689,8 @@ app.get('/api/message/:id', authenticate, async (req, res) => {
       .from('messages')
       .select(`
         *,
-        sender:users(id, username, first_name, last_name, profile_picture),
-        receiver:users(id, username, first_name, last_name, profile_picture)
+        sender:users!messages_sender_id_fkey(id, username, first_name, last_name, profile_picture),
+        receiver:users!messages_receiver_id_fkey(id, username, first_name, last_name, profile_picture)
       `)
       .or(`and(sender_id.eq.${userId},receiver_id.eq.${friendId}),and(sender_id.eq.${friendId},receiver_id.eq.${userId})`)
       .order('created_at', { ascending: true });
@@ -742,8 +735,8 @@ app.post('/api/message/:id', authenticate, async (req, res) => {
       })
       .select(`
         *,
-        sender:users(id, username, first_name, last_name, profile_picture),
-        receiver:users(id, username, first_name, last_name, profile_picture)
+        sender:users!messages_sender_id_fkey(id, username, first_name, last_name, profile_picture),
+        receiver:users!messages_receiver_id_fkey(id, username, first_name, last_name, profile_picture)
       `)
       .single();
 
