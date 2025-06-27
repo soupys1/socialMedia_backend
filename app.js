@@ -704,7 +704,7 @@ app.post('/api/content/:id/like', authenticate, async (req, res) => {
   }
 });
 
-app.post('/api/comments/:postId/comment/:commentId/like', authenticate, async (req, res) => {
+app.post('/api/content/:postId/comment/:commentId/like', authenticate, async (req, res) => {
   const commentId = req.params.commentId;
   const userId = req.user.id;
 
@@ -721,10 +721,14 @@ app.post('/api/comments/:postId/comment/:commentId/like', authenticate, async (r
     if (existingLike) {
       // Unlike
       await req.supabase.from('comment_likes').delete().eq('id', existingLike.id);
+      // Decrement likes
+      await req.supabase.rpc('decrement_comment_likes', { comment_id: commentId });
       return res.json({ liked: false });
     } else {
       // Like
       await req.supabase.from('comment_likes').insert({ user_id: userId, comment_id: commentId });
+      // Increment likes
+      await req.supabase.rpc('increment_comment_likes', { comment_id: commentId });
       return res.json({ liked: true });
     }
   } catch (error) {
