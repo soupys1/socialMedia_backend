@@ -195,14 +195,12 @@ app.post('/api/login', async (req, res) => {
 
 app.post('/api/logout', authenticate, async (req, res) => {
   try {
-    const token = req.cookies.token;
-    const { error } = await supabase.auth.admin.signOut(token);
-    if (error) throw error;
-
+    // Clear the cookie - no need for admin signOut
     res.clearCookie('token', {
       httpOnly: true,
       secure: true,
-      sameSite: 'none'
+      sameSite: 'none',
+      domain: undefined
     });
     res.json({ message: 'Logged out successfully' });
   } catch (error) {
@@ -451,7 +449,13 @@ app.get('/api/content', authenticate, async (req, res) => {
         *,
         author:users(username, id, profile_picture),
         images(id, filename, created_at),
-        post_likes(id, user_id)
+        post_likes(id, user_id),
+        comments(
+          id,
+          content,
+          created_at,
+          author:users(id, username, profile_picture)
+        )
       `)
       .order('id', { ascending: false });
 
@@ -462,12 +466,13 @@ app.get('/api/content', authenticate, async (req, res) => {
     const formattedPosts = posts.map(post => ({
       ...post,
       likedByUser: post.post_likes.some(like => like.user_id === userId),
+      likes: post.likes || 0, // Ensure likes count is included
       images: post.images.map(img => ({
         id: img.id,
         url: `${process.env.SUPABASE_URL}/storage/v1/object/public/uploads/post_images/${img.filename}`,
         uploadedAt: img.created_at,
       })),
-      post_likes: undefined,
+      post_likes: undefined, // Remove the raw post_likes data
     }));
 
     console.log('Sending response with posts:', formattedPosts.length);
@@ -665,6 +670,17 @@ app.get('/api/message/:id', authenticate, async (req, res) => {
 
     if (userError || !friendExists) return res.status(404).json({ error: 'User not found' });
 
+    // Check if they are friends
+    const { data: friendship, error: friendError } = await supabase
+      .from('friends')
+      .select('id')
+      .or(`and(user_id.eq.${userId},friend_id.eq.${friendId},friended.eq.true),and(user_id.eq.${friendId},friend_id.eq.${userId},friended.eq.true)`)
+      .single();
+
+    if (friendError || !friendship) {
+      return res.status(403).json({ error: 'You can only message your friends' });
+    }
+
     const { data: messages, error } = await supabase
       .from('messages')
       .select(`
@@ -757,12 +773,86 @@ app.post('/api/content/:id/comment', authenticate, async (req, res) => {
     const { data: comment, error } = await supabase
       .from('comments')
       .insert({ post_id: postId, author_id: req.user.id, content })
-      .select()
+      .select(`
+        *,
+        author:users(id, username, profile_picture)
+      `)
       .single();
     if (error) throw error;
     res.status(201).json(comment);
   } catch (error) {
     res.status(500).json({ error: 'Failed to add comment' });
+  }
+});
+
+// Comment like endpoint (frontend expects /api/content/:id/comment/:commentId/like)
+app.post('/api/content/:postId/comment/:commentId/like', authenticate, async (req, res) => {
+  const commentId = req.params.commentId;
+  const userId = req.user.id;
+
+  if (isNaN(commentId)) return res.status(400).json({ error: 'Invalid comment ID' });
+
+  try {
+    const { data: existingLike, error: fetchError } = await supabase
+      .from('comment_likes')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('comment_id', commentId)
+      .single();
+
+    if (fetchError && fetchError.code !== 'PGRST116') throw fetchError;
+
+    if (existingLike) {
+      // Unlike
+      await supabase.from('comment_likes').delete().eq('id', existingLike.id);
+      return res.json({ liked: false });
+    } else {
+      // Like
+      await supabase.from('comment_likes').insert({ user_id: userId, comment_id: commentId });
+      return res.json({ liked: true });
+    }
+  } catch (error) {
+    console.error('Error toggling comment like:', error.message);
+    res.status(500).json({ error: 'Failed to toggle comment like' });
+  }
+});
+
+// Comment deletion endpoint (frontend expects /api/content/:id/comment/:commentId)
+app.delete('/api/content/:postId/comment/:commentId', authenticate, async (req, res) => {
+  const commentId = req.params.commentId;
+  const userId = req.user.id;
+
+  if (isNaN(commentId)) return res.status(400).json({ error: 'Invalid comment ID' });
+
+  try {
+    // Check if the comment exists and belongs to the user
+    const { data: comment, error: fetchError } = await supabase
+      .from('comments')
+      .select('id, author_id')
+      .eq('id', commentId)
+      .single();
+
+    if (fetchError || !comment) {
+      return res.status(404).json({ error: 'Comment not found' });
+    }
+
+    if (comment.author_id !== userId) {
+      return res.status(403).json({ error: 'You can only delete your own comments' });
+    }
+
+    // Delete the comment
+    const { error: deleteError } = await supabase
+      .from('comments')
+      .delete()
+      .eq('id', commentId)
+      .eq('author_id', userId);
+
+    if (deleteError) throw deleteError;
+
+    res.json({ message: 'Comment deleted' });
+  } catch (error) {
+    console.error('Error deleting comment:', error.message);
+    res.status(500).json({ error: 'Failed to delete comment' });
   }
 });
 
@@ -782,18 +872,92 @@ app.delete('/api/content/:id', authenticate, async (req, res) => {
   }
 });
 
+// Update Post Routes
+app.put('/api/content/:id', authenticate, async (req, res) => {
+  const postId = req.params.id;
+  const { title, content } = req.body;
+  
+  if (!title || !content) {
+    return res.status(400).json({ error: 'Title and content are required' });
+  }
+
+  try {
+    // First check if the post exists and belongs to the user
+    const { data: existingPost, error: fetchError } = await supabase
+      .from('posts')
+      .select('id, author_id')
+      .eq('id', postId)
+      .single();
+
+    if (fetchError || !existingPost) {
+      return res.status(404).json({ error: 'Post not found' });
+    }
+
+    if (existingPost.author_id !== req.user.id) {
+      return res.status(403).json({ error: 'You can only edit your own posts' });
+    }
+
+    // Update the post
+    const { data: updatedPost, error: updateError } = await supabase
+      .from('posts')
+      .update({ title, content, updated_at: new Date().toISOString() })
+      .eq('id', postId)
+      .eq('author_id', req.user.id)
+      .select()
+      .single();
+
+    if (updateError) throw updateError;
+
+    res.json(updatedPost);
+  } catch (error) {
+    console.error('Error updating post:', error.message);
+    res.status(500).json({ error: 'Failed to update post' });
+  }
+});
+
 // Accept Friend Request
 app.post('/api/profile/accept/:id', authenticate, async (req, res) => {
   const requestId = req.params.id;
+  const userId = req.user.id;
+  
   try {
-    const { error } = await supabase
+    // First, verify this is a valid incoming friend request for the current user
+    const { data: friendRequest, error: fetchError } = await supabase
+      .from('friends')
+      .select('*')
+      .eq('id', requestId)
+      .eq('friend_id', userId) // Current user is the one receiving the request
+      .eq('friended', false)   // Request is pending
+      .single();
+
+    if (fetchError || !friendRequest) {
+      return res.status(404).json({ error: 'Friend request not found or already processed' });
+    }
+
+    // Update the friend request to accepted
+    const { error: updateError } = await supabase
       .from('friends')
       .update({ friended: true })
-      .eq('id', requestId)
-      .eq('friend_id', req.user.id);
-    if (error) throw error;
+      .eq('id', requestId);
+
+    if (updateError) throw updateError;
+
+    // Create the reverse friendship (so both users are friends)
+    const { error: insertError } = await supabase
+      .from('friends')
+      .insert({
+        user_id: userId,
+        friend_id: friendRequest.user_id,
+        friended: true
+      });
+
+    if (insertError && insertError.code !== '23505') { // Ignore duplicate key errors
+      throw insertError;
+    }
+
     res.json({ message: 'Friend request accepted' });
   } catch (error) {
+    console.error('Accept friend request error:', error.message);
     res.status(500).json({ error: 'Failed to accept friend request' });
   }
 });
