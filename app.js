@@ -580,8 +580,12 @@ app.post('/api/profile/:id', authenticate, async (req, res) => {
       .select('id, friended')
       .or(`and(user_id.eq.${userId},friend_id.eq.${friendId}),and(user_id.eq.${friendId},friend_id.eq.${userId})`);
 
+    if (existingError) {
+      console.error('Error checking for existing friend request:', existingError.message);
+      return res.status(500).json({ error: 'Database error' });
+    }
+
     if (existing && existing.length > 0) {
-      // If any request or friendship exists, block duplicate
       return res.status(400).json({ error: 'Friend request or friendship already exists' });
     }
 
@@ -594,11 +598,18 @@ app.post('/api/profile/:id', authenticate, async (req, res) => {
       `)
       .single();
 
-    if (createError) throw createError;
+    if (createError) {
+      if (createError.code === '23505') {
+        // Unique constraint violation
+        return res.status(400).json({ error: 'Friend request or friendship already exists' });
+      }
+      console.error('Error creating friend request:', createError.message);
+      return res.status(500).json({ error: 'Cannot add friend' });
+    }
 
     res.status(201).json({ message: 'Friend request sent', data: newFriend });
   } catch (error) {
-    console.error('Error adding friend:', error.message);
+    console.error('Error adding friend:', error.message, error.stack);
     res.status(500).json({ error: 'Cannot add friend' });
   }
 });
@@ -678,13 +689,17 @@ app.get('/api/message/:id', authenticate, async (req, res) => {
   const friendId = req.params.id;
 
   try {
+    console.log('Message retrieval: userId', userId, 'friendId', friendId);
     const { data: friendExists, error: userError } = await req.supabase
       .from('users')
       .select('id')
       .eq('id', friendId)
       .single();
 
-    if (userError || !friendExists) return res.status(404).json({ error: 'User not found' });
+    if (userError || !friendExists) {
+      console.error('User not found for messaging:', friendId, userError?.message);
+      return res.status(404).json({ error: 'User not found' });
+    }
 
     // Check if they are friends
     const { data: friendship, error: friendError } = await req.supabase
@@ -694,6 +709,7 @@ app.get('/api/message/:id', authenticate, async (req, res) => {
       .single();
 
     if (friendError || !friendship) {
+      console.error('Friendship check failed:', friendError?.message);
       return res.status(403).json({ error: 'You can only message your friends' });
     }
 
@@ -707,8 +723,12 @@ app.get('/api/message/:id', authenticate, async (req, res) => {
       .or(`and(sender_id.eq.${userId},receiver_id.eq.${friendId}),and(sender_id.eq.${friendId},receiver_id.eq.${userId})`)
       .order('created_at', { ascending: true });
 
-    if (error) throw error;
+    if (error) {
+      console.error('Error retrieving messages:', error.message, error.stack);
+      throw error;
+    }
 
+    console.log('Messages retrieved:', messages.length);
     const formattedMessages = messages.map(msg => ({
       ...msg,
       isSender: msg.sender_id === userId,
@@ -717,7 +737,7 @@ app.get('/api/message/:id', authenticate, async (req, res) => {
 
     res.json({ messages: formattedMessages });
   } catch (error) {
-    console.error('Error retrieving messages:', error.message);
+    console.error('Error retrieving messages:', error.message, error.stack);
     res.status(500).json({ error: 'Cannot retrieve messages' });
   }
 });
@@ -975,6 +995,40 @@ app.post('/api/profile/accept/:id', authenticate, async (req, res) => {
   } catch (error) {
     console.error('Accept friend request error:', error.message);
     res.status(500).json({ error: 'Failed to accept friend request' });
+  }
+});
+
+// Deny (delete) a friend request
+app.delete('/api/profile/deny/:id', authenticate, async (req, res) => {
+  const requestId = req.params.id;
+  const userId = req.user.id;
+
+  try {
+    // Only allow the recipient to deny the request
+    const { data: friendRequest, error: fetchError } = await req.supabase
+      .from('friends')
+      .select('*')
+      .eq('id', requestId)
+      .eq('friend_id', userId)
+      .eq('friended', false)
+      .single();
+
+    if (fetchError || !friendRequest) {
+      return res.status(404).json({ error: 'Friend request not found or already processed' });
+    }
+
+    // Delete the friend request
+    const { error: deleteError } = await req.supabase
+      .from('friends')
+      .delete()
+      .eq('id', requestId);
+
+    if (deleteError) throw deleteError;
+
+    res.json({ message: 'Friend request denied' });
+  } catch (error) {
+    console.error('Deny friend request error:', error.message, error.stack);
+    res.status(500).json({ error: 'Failed to deny friend request' });
   }
 });
 
