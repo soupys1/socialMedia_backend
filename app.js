@@ -309,7 +309,15 @@ app.get('/api/profile', authenticate, async (req, res) => {
       .from('posts')
       .select(`
         *,
-        images(id, filename, created_at)
+        author:users!posts_author_id_fkey(id, username, profile_picture),
+        images(id, filename, created_at),
+        post_likes(id, user_id),
+        comments(
+          id,
+          content,
+          created_at,
+          author:users!comments_author_id_fkey(id, username, profile_picture)
+        )
       `)
       .eq('author_id', id)
       .order('created_at', { ascending: false });
@@ -454,7 +462,7 @@ app.get('/api/content', authenticate, async (req, res) => {
       .from('posts')
       .select(`
         *,
-        author:users(username, id, profile_picture),
+        author:users!posts_author_id_fkey(id, username, profile_picture),
         images(id, filename, created_at),
         post_likes(id, user_id),
         comments(
@@ -531,7 +539,7 @@ app.get('/api/comments/:postId', authenticate, async (req, res) => {
       .from('comments')
       .select(`
         *,
-        author:users(username, id, profile_picture),
+        author:users!comments_author_id_fkey(id, username, profile_picture),
         comment_likes(id, user_id)
       `)
       .eq('post_id', postId)
