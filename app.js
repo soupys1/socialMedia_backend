@@ -319,24 +319,27 @@ app.get('/api/profile', authenticate, async (req, res) => {
       return res.status(500).json({ error: 'Failed to load posts' });
     }
 
-    const formattedPosts = (posts || []).map(post => ({
+    const formattedPosts = posts.map(post => ({
       ...post,
+      likedByUser: post.post_likes.some(like => like.user_id === userId),
+      likes: post.likes || 0, // Ensure likes count is included
       images: (post.images || []).map(img => ({
         id: img.id,
         url: `${process.env.SUPABASE_URL}/storage/v1/object/public/uploads/post_images/${img.filename}`,
         uploadedAt: img.created_at,
       })),
+      post_likes: undefined, // Remove the raw post_likes data
     }));
 
     let friends = [];
     let incomingRequests = [];
     try {
-      // Explicit join on friend_id foreign key
+      // Fetch friends with simpler join
       const { data: friendsData, error: friendsError } = await supabase
         .from('friends')
         .select(`
           *,
-          friend:users!friends_friend_id_fkey(id, username, first_name, last_name, profile_picture)
+          friend:users(id, username, first_name, last_name, profile_picture)
         `)
         .eq('user_id', id)
         .eq('friended', true);
@@ -347,12 +350,12 @@ app.get('/api/profile', authenticate, async (req, res) => {
       friends = [];
     }
     try {
-      // Explicit join on user_id foreign key for incoming requests
+      // Fetch incoming requests with simpler join
       const { data: requestsData, error: requestsError } = await supabase
         .from('friends')
         .select(`
           *,
-          user:users!friends_user_id_fkey(id, username, first_name, last_name, profile_picture)
+          user:users(id, username, first_name, last_name, profile_picture)
         `)
         .eq('friend_id', userId)
         .eq('friended', false);
@@ -467,7 +470,7 @@ app.get('/api/content', authenticate, async (req, res) => {
       ...post,
       likedByUser: post.post_likes.some(like => like.user_id === userId),
       likes: post.likes || 0, // Ensure likes count is included
-      images: post.images.map(img => ({
+      images: (post.images || []).map(img => ({
         id: img.id,
         url: `${process.env.SUPABASE_URL}/storage/v1/object/public/uploads/post_images/${img.filename}`,
         uploadedAt: img.created_at,
