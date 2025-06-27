@@ -75,6 +75,10 @@ const authenticate = async (req, res, next) => {
 
     console.log('User authenticated:', user.id);
     req.user = user;
+    // Attach a Supabase client with the user's token for RLS
+    req.supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY, {
+      global: { headers: { Authorization: `Bearer ${token}` } }
+    });
     next();
   } catch (error) {
     console.error('Authentication error:', error.message);
@@ -229,19 +233,19 @@ app.post('/api/profile/picture', authenticate, async (req, res) => {
     const filePath = `profile_pictures/${fileName}`;
 
     // Upload to Supabase Storage
-    const { error: uploadError } = await supabase.storage
+    const { error: uploadError } = await req.supabase.storage
       .from('uploads')
       .upload(filePath, file.data, { contentType: file.mimetype });
 
     if (uploadError) throw uploadError;
 
     // Get public URL
-    const { data: { publicUrl } } = supabase.storage
+    const { data: { publicUrl } } = req.supabase.storage
       .from('uploads')
       .getPublicUrl(filePath);
 
     // Delete old profile picture if exists
-    const { data: user } = await supabase
+    const { data: user } = await req.supabase
       .from('users')
       .select('profile_picture')
       .eq('id', userId)
@@ -253,7 +257,7 @@ app.post('/api/profile/picture', authenticate, async (req, res) => {
     }
 
     // Update user profile picture
-    const { error: updateError } = await supabase
+    const { error: updateError } = await req.supabase
       .from('users')
       .update({ profile_picture: publicUrl })
       .eq('id', userId);
@@ -277,7 +281,7 @@ app.get('/api/profile', authenticate, async (req, res) => {
 
     console.log('Profile ID to fetch:', id);
 
-    const { data: profileUser, error: userError } = await supabase
+    const { data: profileUser, error: userError } = await req.supabase
       .from('users')
       .select('id, username, first_name, last_name, email, profile_picture')
       .eq('id', id)
@@ -297,7 +301,7 @@ app.get('/api/profile', authenticate, async (req, res) => {
 
     // If profile picture was invalid, update the database
     if (profileUser.profile_picture !== req.query.profile_picture) {
-      await supabase
+      await req.supabase
         .from('users')
         .update({ profile_picture: profileUser.profile_picture })
         .eq('id', id);
@@ -305,7 +309,7 @@ app.get('/api/profile', authenticate, async (req, res) => {
 
     console.log('Profile user found:', profileUser.username);
 
-    const { data: posts, error: postsError } = await supabase
+    const { data: posts, error: postsError } = await req.supabase
       .from('posts')
       .select(`
         *,
@@ -347,7 +351,7 @@ app.get('/api/profile', authenticate, async (req, res) => {
     let incomingRequests = [];
     try {
       // Friends (accepted)
-      const { data: friendsData, error: friendsError } = await supabase
+      const { data: friendsData, error: friendsError } = await req.supabase
         .from('friends')
         .select(`
           *,
@@ -363,7 +367,7 @@ app.get('/api/profile', authenticate, async (req, res) => {
     }
     try {
       // Incoming requests (pending)
-      const { data: requestsData, error: requestsError } = await supabase
+      const { data: requestsData, error: requestsError } = await req.supabase
         .from('friends')
         .select(`
           *,
@@ -405,7 +409,7 @@ app.post('/api/content', authenticate, async (req, res) => {
 
   try {
     // Create post
-    const { data: post, error: postError } = await supabase
+    const { data: post, error: postError } = await req.supabase
       .from('posts')
       .insert({ title, content, author_id: req.user.id })
       .select()
@@ -424,17 +428,17 @@ app.post('/api/content', authenticate, async (req, res) => {
       const fileName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(file.name)}`;
       const filePath = `post_images/${fileName}`;
 
-      const { error: uploadError } = await supabase.storage
+      const { error: uploadError } = await req.supabase.storage
         .from('uploads')
         .upload(filePath, file.data, { contentType: file.mimetype });
 
       if (uploadError) throw uploadError;
 
-      const { data: { publicUrl } } = supabase.storage
+      const { data: { publicUrl } } = req.supabase.storage
         .from('uploads')
         .getPublicUrl(filePath);
 
-      const { error: imageError } = await supabase.from('images').insert({
+      const { error: imageError } = await req.supabase.from('images').insert({
         filename: fileName,
         path: filePath,
         mimetype: file.mimetype,
@@ -458,7 +462,7 @@ app.get('/api/content', authenticate, async (req, res) => {
 
     const userId = req.user.id;
 
-    const { data: posts, error } = await supabase
+    const { data: posts, error } = await req.supabase
       .from('posts')
       .select(`
         *,
@@ -510,7 +514,7 @@ app.post('/api/comments', authenticate, async (req, res) => {
   }
 
   try {
-    const { data: comment, error } = await supabase
+    const { data: comment, error } = await req.supabase
       .from('comments')
       .insert({
         content,
@@ -535,7 +539,7 @@ app.get('/api/comments/:postId', authenticate, async (req, res) => {
   if (isNaN(postId)) return res.status(400).json({ error: 'Invalid post ID' });
 
   try {
-    const { data: comments, error } = await supabase
+    const { data: comments, error } = await req.supabase
       .from('comments')
       .select(`
         *,
@@ -571,7 +575,7 @@ app.post('/api/profile/:id', authenticate, async (req, res) => {
     }
 
     // Check for existing friend request or friendship in either direction
-    const { data: existing, error: existingError } = await supabase
+    const { data: existing, error: existingError } = await req.supabase
       .from('friends')
       .select('id, friended')
       .or(`and(user_id.eq.${userId},friend_id.eq.${friendId}),and(user_id.eq.${friendId},friend_id.eq.${userId})`);
@@ -581,7 +585,7 @@ app.post('/api/profile/:id', authenticate, async (req, res) => {
       return res.status(400).json({ error: 'Friend request or friendship already exists' });
     }
 
-    const { data: newFriend, error: createError } = await supabase
+    const { data: newFriend, error: createError } = await req.supabase
       .from('friends')
       .insert({ user_id: userId, friend_id: friendId, friended: false })
       .select(`
@@ -607,7 +611,7 @@ app.post('/api/content/:id/like', authenticate, async (req, res) => {
   if (!postId) return res.status(400).json({ error: 'Invalid post ID' });
 
   try {
-    const { data: existingLike, error: fetchError } = await supabase
+    const { data: existingLike, error: fetchError } = await req.supabase
       .from('post_likes')
       .select('id')
       .eq('user_id', userId)
@@ -619,15 +623,15 @@ app.post('/api/content/:id/like', authenticate, async (req, res) => {
     if (existingLike) {
       // Unlike
       await Promise.all([
-        supabase.from('post_likes').delete().eq('id', existingLike.id),
-        supabase.rpc('decrement_post_likes', { post_id: postId }),
+        req.supabase.from('post_likes').delete().eq('id', existingLike.id),
+        req.supabase.rpc('decrement_post_likes', { post_id: postId }),
       ]);
       return res.json({ liked: false });
     } else {
       // Like
       await Promise.all([
-        supabase.from('post_likes').insert({ user_id: userId, post_id: postId }),
-        supabase.rpc('increment_post_likes', { post_id: postId }),
+        req.supabase.from('post_likes').insert({ user_id: userId, post_id: postId }),
+        req.supabase.rpc('increment_post_likes', { post_id: postId }),
       ]);
       return res.json({ liked: true });
     }
@@ -644,7 +648,7 @@ app.post('/api/comments/:id/like', authenticate, async (req, res) => {
   if (isNaN(commentId)) return res.status(400).json({ error: 'Invalid comment ID' });
 
   try {
-    const { data: existingLike, error: fetchError } = await supabase
+    const { data: existingLike, error: fetchError } = await req.supabase
       .from('comment_likes')
       .select('id')
       .eq('user_id', userId)
@@ -655,11 +659,11 @@ app.post('/api/comments/:id/like', authenticate, async (req, res) => {
 
     if (existingLike) {
       // Unlike
-      await supabase.from('comment_likes').delete().eq('id', existingLike.id);
+      await req.supabase.from('comment_likes').delete().eq('id', existingLike.id);
       return res.json({ liked: false });
     } else {
       // Like
-      await supabase.from('comment_likes').insert({ user_id: userId, comment_id: commentId });
+      await req.supabase.from('comment_likes').insert({ user_id: userId, comment_id: commentId });
       return res.json({ liked: true });
     }
   } catch (error) {
@@ -674,7 +678,7 @@ app.get('/api/message/:id', authenticate, async (req, res) => {
   const friendId = req.params.id;
 
   try {
-    const { data: friendExists, error: userError } = await supabase
+    const { data: friendExists, error: userError } = await req.supabase
       .from('users')
       .select('id')
       .eq('id', friendId)
@@ -683,7 +687,7 @@ app.get('/api/message/:id', authenticate, async (req, res) => {
     if (userError || !friendExists) return res.status(404).json({ error: 'User not found' });
 
     // Check if they are friends
-    const { data: friendship, error: friendError } = await supabase
+    const { data: friendship, error: friendError } = await req.supabase
       .from('friends')
       .select('id')
       .or(`and(user_id.eq.${userId},friend_id.eq.${friendId},friended.eq.true),and(user_id.eq.${friendId},friend_id.eq.${userId},friended.eq.true)`)
@@ -693,7 +697,7 @@ app.get('/api/message/:id', authenticate, async (req, res) => {
       return res.status(403).json({ error: 'You can only message your friends' });
     }
 
-    const { data: messages, error } = await supabase
+    const { data: messages, error } = await req.supabase
       .from('messages')
       .select(`
         *,
@@ -726,7 +730,7 @@ app.post('/api/message/:id', authenticate, async (req, res) => {
   if (!content) return res.status(400).json({ error: 'Message content is required' });
 
   try {
-    const { data: receiver, error: userError } = await supabase
+    const { data: receiver, error: userError } = await req.supabase
       .from('users')
       .select('id')
       .eq('id', receiverId)
@@ -734,7 +738,7 @@ app.post('/api/message/:id', authenticate, async (req, res) => {
 
     if (userError || !receiver) return res.status(404).json({ error: 'Receiver not found' });
 
-    const { data: message, error } = await supabase
+    const { data: message, error } = await req.supabase
       .from('messages')
       .insert({
         sender_id: senderId,
@@ -766,7 +770,7 @@ app.post('/api/message/:id', authenticate, async (req, res) => {
 // User Routes
 app.get('/api/users', authenticate, async (req, res) => {
   try {
-    const { data: users, error } = await supabase
+    const { data: users, error } = await req.supabase
       .from('users')
       .select('id, username, first_name, last_name, profile_picture');
     if (error) throw error;
@@ -782,7 +786,7 @@ app.post('/api/content/:id/comment', authenticate, async (req, res) => {
   const { content } = req.body;
   if (!content) return res.status(400).json({ error: 'Content required' });
   try {
-    const { data: comment, error } = await supabase
+    const { data: comment, error } = await req.supabase
       .from('comments')
       .insert({ post_id: postId, author_id: req.user.id, content })
       .select(`
@@ -805,7 +809,7 @@ app.post('/api/content/:postId/comment/:commentId/like', authenticate, async (re
   if (isNaN(commentId)) return res.status(400).json({ error: 'Invalid comment ID' });
 
   try {
-    const { data: existingLike, error: fetchError } = await supabase
+    const { data: existingLike, error: fetchError } = await req.supabase
       .from('comment_likes')
       .select('id')
       .eq('user_id', userId)
@@ -816,11 +820,11 @@ app.post('/api/content/:postId/comment/:commentId/like', authenticate, async (re
 
     if (existingLike) {
       // Unlike
-      await supabase.from('comment_likes').delete().eq('id', existingLike.id);
+      await req.supabase.from('comment_likes').delete().eq('id', existingLike.id);
       return res.json({ liked: false });
     } else {
       // Like
-      await supabase.from('comment_likes').insert({ user_id: userId, comment_id: commentId });
+      await req.supabase.from('comment_likes').insert({ user_id: userId, comment_id: commentId });
       return res.json({ liked: true });
     }
   } catch (error) {
@@ -838,7 +842,7 @@ app.delete('/api/content/:postId/comment/:commentId', authenticate, async (req, 
 
   try {
     // Check if the comment exists and belongs to the user
-    const { data: comment, error: fetchError } = await supabase
+    const { data: comment, error: fetchError } = await req.supabase
       .from('comments')
       .select('id, author_id')
       .eq('id', commentId)
@@ -853,7 +857,7 @@ app.delete('/api/content/:postId/comment/:commentId', authenticate, async (req, 
     }
 
     // Delete the comment
-    const { error: deleteError } = await supabase
+    const { error: deleteError } = await req.supabase
       .from('comments')
       .delete()
       .eq('id', commentId)
@@ -872,7 +876,7 @@ app.delete('/api/content/:postId/comment/:commentId', authenticate, async (req, 
 app.delete('/api/content/:id', authenticate, async (req, res) => {
   const postId = req.params.id;
   try {
-    const { error } = await supabase
+    const { error } = await req.supabase
       .from('posts')
       .delete()
       .eq('id', postId)
@@ -895,7 +899,7 @@ app.put('/api/content/:id', authenticate, async (req, res) => {
 
   try {
     // First check if the post exists and belongs to the user
-    const { data: existingPost, error: fetchError } = await supabase
+    const { data: existingPost, error: fetchError } = await req.supabase
       .from('posts')
       .select('id, author_id')
       .eq('id', postId)
@@ -910,7 +914,7 @@ app.put('/api/content/:id', authenticate, async (req, res) => {
     }
 
     // Update the post
-    const { data: updatedPost, error: updateError } = await supabase
+    const { data: updatedPost, error: updateError } = await req.supabase
       .from('posts')
       .update({ title, content, updated_at: new Date().toISOString() })
       .eq('id', postId)
@@ -934,7 +938,7 @@ app.post('/api/profile/accept/:id', authenticate, async (req, res) => {
   
   try {
     // First, verify this is a valid incoming friend request for the current user
-    const { data: friendRequest, error: fetchError } = await supabase
+    const { data: friendRequest, error: fetchError } = await req.supabase
       .from('friends')
       .select('*')
       .eq('id', requestId)
@@ -947,7 +951,7 @@ app.post('/api/profile/accept/:id', authenticate, async (req, res) => {
     }
 
     // Update the friend request to accepted
-    const { error: updateError } = await supabase
+    const { error: updateError } = await req.supabase
       .from('friends')
       .update({ friended: true })
       .eq('id', requestId);
@@ -955,7 +959,7 @@ app.post('/api/profile/accept/:id', authenticate, async (req, res) => {
     if (updateError) throw updateError;
 
     // Create the reverse friendship (so both users are friends)
-    const { error: insertError } = await supabase
+    const { error: insertError } = await req.supabase
       .from('friends')
       .insert({
         user_id: userId,
