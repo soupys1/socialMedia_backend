@@ -346,7 +346,7 @@ app.get('/api/profile', authenticate, async (req, res) => {
     let friends = [];
     let incomingRequests = [];
     try {
-      // Explicit join on friend_id foreign key for accepted friends
+      // Friends (accepted)
       const { data: friendsData, error: friendsError } = await supabase
         .from('friends')
         .select(`
@@ -362,7 +362,7 @@ app.get('/api/profile', authenticate, async (req, res) => {
       friends = [];
     }
     try {
-      // Explicit join on user_id foreign key for incoming requests
+      // Incoming requests (pending)
       const { data: requestsData, error: requestsError } = await supabase
         .from('friends')
         .select(`
