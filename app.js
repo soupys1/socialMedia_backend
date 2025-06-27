@@ -506,6 +506,57 @@ app.get('/api/content', authenticate, async (req, res) => {
   }
 });
 
+// Get a single post by ID
+app.get('/api/content/:id', authenticate, async (req, res) => {
+  const postId = req.params.id;
+  const userId = req.user.id;
+
+  if (!postId) return res.status(400).json({ error: 'Invalid post ID' });
+
+  try {
+    const { data: post, error } = await req.supabase
+      .from('posts')
+      .select(`
+        *,
+        author:users!posts_author_id_fkey(id, username, profile_picture),
+        images(id, filename, created_at),
+        post_likes(id, user_id),
+        comments(
+          id,
+          content,
+          created_at,
+          author:users!comments_author_id_fkey(id, username, profile_picture)
+        )
+      `)
+      .eq('id', postId)
+      .single();
+
+    if (error || !post) {
+      return res.status(404).json({ error: 'Post not found' });
+    }
+
+    const formattedPost = {
+      ...post,
+      likedByUser: (post.post_likes || []).some(like => like.user_id === userId),
+      likes: post.likes || 0,
+      images: (post.images || []).map(img => ({
+        id: img.id,
+        url: `${process.env.SUPABASE_URL}/storage/v1/object/public/uploads/post_images/${img.filename}`,
+        uploadedAt: img.created_at,
+      })),
+      comments: (post.comments || []).map(comment => ({
+        ...comment,
+        author: comment.author || {},
+      })),
+      post_likes: undefined,
+    };
+
+    res.json({ post: formattedPost, user: req.user });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch post' });
+  }
+});
+
 // Comment Routes
 app.post('/api/comments', authenticate, async (req, res) => {
   const { postId, content } = req.body;
