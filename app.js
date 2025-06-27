@@ -979,22 +979,20 @@ app.post('/api/profile/accept/:id', authenticate, async (req, res) => {
 
     if (updateError) throw updateError;
 
-    // Create the reverse friendship (so both users are friends)
-    const { error: insertError } = await req.supabase
+    // Upsert the reverse friendship (so both users are friends)
+    const { error: upsertError } = await req.supabase
       .from('friends')
-      .insert({
+      .upsert({
         user_id: userId,
         friend_id: friendRequest.user_id,
         friended: true
-      });
+      }, { onConflict: ['user_id', 'friend_id'] });
 
-    if (insertError && insertError.code !== '23505') { // Ignore duplicate key errors
-      throw insertError;
-    }
+    if (upsertError) throw upsertError;
 
     res.json({ message: 'Friend request accepted' });
   } catch (error) {
-    console.error('Accept friend request error:', error.message);
+    console.error('Accept friend request error:', error.message, error.stack);
     res.status(500).json({ error: 'Failed to accept friend request' });
   }
 });
