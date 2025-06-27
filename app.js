@@ -704,11 +704,9 @@ app.post('/api/content/:id/like', authenticate, async (req, res) => {
   }
 });
 
-app.post('/api/comments/:id/like', authenticate, async (req, res) => {
-  const commentId = req.params.id;
+app.post('/api/comments/:postId/comment/:commentId/like', authenticate, async (req, res) => {
+  const commentId = req.params.commentId;
   const userId = req.user.id;
-
-  if (isNaN(commentId)) return res.status(400).json({ error: 'Invalid comment ID' });
 
   try {
     const { data: existingLike, error: fetchError } = await req.supabase
@@ -874,44 +872,10 @@ app.post('/api/content/:id/comment', authenticate, async (req, res) => {
   }
 });
 
-// Comment like endpoint (frontend expects /api/content/:id/comment/:commentId/like)
-app.post('/api/content/:postId/comment/:commentId/like', authenticate, async (req, res) => {
-  const commentId = req.params.commentId;
-  const userId = req.user.id;
-
-  if (isNaN(commentId)) return res.status(400).json({ error: 'Invalid comment ID' });
-
-  try {
-    const { data: existingLike, error: fetchError } = await req.supabase
-      .from('comment_likes')
-      .select('id')
-      .eq('user_id', userId)
-      .eq('comment_id', commentId)
-      .single();
-
-    if (fetchError && fetchError.code !== 'PGRST116') throw fetchError;
-
-    if (existingLike) {
-      // Unlike
-      await req.supabase.from('comment_likes').delete().eq('id', existingLike.id);
-      return res.json({ liked: false });
-    } else {
-      // Like
-      await req.supabase.from('comment_likes').insert({ user_id: userId, comment_id: commentId });
-      return res.json({ liked: true });
-    }
-  } catch (error) {
-    console.error('Error toggling comment like:', error.message);
-    res.status(500).json({ error: 'Failed to toggle comment like' });
-  }
-});
-
 // Comment deletion endpoint (frontend expects /api/content/:id/comment/:commentId)
 app.delete('/api/content/:postId/comment/:commentId', authenticate, async (req, res) => {
   const commentId = req.params.commentId;
   const userId = req.user.id;
-
-  if (isNaN(commentId)) return res.status(400).json({ error: 'Invalid comment ID' });
 
   try {
     // Check if the comment exists and belongs to the user
